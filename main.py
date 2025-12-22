@@ -1,36 +1,27 @@
-import os
-import sys
+import asyncio
+from src.config import Config
+from src.scraper import run_scraper
+from src.analyzer import run_analysis, generate_summary_text
+from src.reporter import clean_data, create_plots, send_email
 
-# 如果在本地运行，尝试加载 .env
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
-class Config:
-    # 爬虫配置
-    TARGET_OPERATORS = ["vodacom", "mtn", "telkom", "rain-internet-service-provider"]
-    DAYS_TO_SCRAPE = 7
+async def main():
+    # 1. 验证配置
+    Config.validate()
     
-    # LLM 配置
-    LLM_API_KEY = os.getenv("LLM_API_KEY")
-    LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
-    LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+    # 2. 爬取
+    df = await run_scraper()
+    if df.empty:
+        print("⚠️ 无数据，跳过后续步骤")
+        return
 
-    # 邮件配置
-    SMTP_SERVER = "smtp.gmail.com"
-    SMTP_PORT = 587
-    EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-    EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-    # 接收者可以配置为一个逗号分隔的字符串
-    EMAIL_RECEIVERS = os.getenv("EMAIL_RECEIVERS", "").split(",")
+    # 3. 分析
+    df = await run_analysis(df)
+    
+    # 4. 报告
+    df = clean_data(df)
+    summary = generate_summary_text(df)
+    imgs = create_plots(df)
+    send_email(df, summary, imgs)
 
-    # 检查必要配置
-    @staticmethod
-    def validate():
-        required = ["LLM_API_KEY", "EMAIL_SENDER", "EMAIL_PASSWORD", "EMAIL_RECEIVERS"]
-        missing = [key for key in required if not os.getenv(key)]
-        if missing:
-            print(f"❌ 缺少环境变量: {', '.join(missing)}")
-            sys.exit(1)
+if __name__ == "__main__":
+    asyncio.run(main())
