@@ -1,1 +1,44 @@
+name: Weekly Telecom Report
 
+on:
+  schedule:
+    # UTC 时间：每周一早上 06:30 (对应南非 SAST 08:30)
+    - cron: '30 6 * * 1'
+  workflow_dispatch: # 允许手动点按钮触发
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Scraper & Analysis
+        env:
+          # 从 GitHub Secrets 注入环境变量
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS: ${{ secrets.EMAIL_RECEIVERS }}
+        run: python main.py
+
+      - name: Upload Artifacts (Optional)
+        # 上传生成的 CSV 以备查（如果有保存到文件的话）
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debug-data
+          path: "*.csv"
+          retention-days: 7
