@@ -11,7 +11,7 @@ except ImportError:
 class Config:
     # 爬虫配置
     TARGET_OPERATORS = ["vodacom", "mtn", "telkom", "rain-internet-service-provider"]
-    DAYS_TO_SCRAPE = 7
+    DAYS_TO_SCRAPE = 3
     
     # LLM 配置
     LLM_API_KEY = os.getenv("LLM_API_KEY")
