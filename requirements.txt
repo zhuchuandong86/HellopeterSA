@@ -3,5 +3,5 @@ pandas
 openai
 matplotlib
 seaborn
-python-dotenv
 nest_asyncio
+python-dotenv
