@@ -1,10 +1,10 @@
-name: Weekly Telecom Report
+name: Weekly Hellopeter Monitor
 
 on:
   schedule:
-    # UTC 时间：每周一早上 06:30 (对应南非 SAST 08:30)
+    # 30 6 * * 1 means: 06:30 UTC every Monday (= 08:30 SAST)
     - cron: '30 6 * * 1'
-  workflow_dispatch: # 允许手动点按钮触发
+  workflow_dispatch: # 允许你手动点击 "Run workflow" 按钮
 
 jobs:
   run-monitor:
@@ -24,21 +24,22 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium
 
-      - name: Run Scraper & Analysis
+      - name: Run Script
         env:
-          # 从 GitHub Secrets 注入环境变量
+          # 这些必须在 Repository Settings -> Secrets 中设置
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECEIVERS: ${{ secrets.EMAIL_RECEIVERS }}
+          # 可选配置，如果需要修改模型或API地址
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
         run: python main.py
 
       - name: Upload Artifacts (Optional)
-        # 上传生成的 CSV 以备查（如果有保存到文件的话）
+        # 上传生成的 CSV 以便排查问题
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: debug-data
+          name: review-data
           path: "*.csv"
           retention-days: 7
