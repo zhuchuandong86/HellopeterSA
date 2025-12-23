@@ -214,37 +214,59 @@ def generate_cluster_table(df):
     return html
 
 def generate_customer_voice(df):
+    print("🗣️ 提取客户原声 (Top 3)...")
+    # 筛选负面评论
     neg_df = df[df['Sentiment'] == 'Negative']
     if neg_df.empty: return "No negative reviews."
 
     html_cards = ""
+    # 按运营商排序确保顺序固定
     operators = sorted(neg_df['Operator'].unique())
 
     for op in operators:
         op_data = neg_df[neg_df['Operator'] == op]
         if op_data.empty: continue
 
-        top_issue = op_data['L2_Issue'].value_counts().idxmax()
-        target_reviews = op_data[op_data['L2_Issue'] == top_issue].sort_values('Urgency', ascending=False)
-        row = target_reviews.iloc[0]
+        # --- 修改开始 ---
+        # 逻辑变更：不再只取 Top Issue 的一条，而是取该运营商最新的 3 条负面评论
+        # 如果你的 analyzer.py 未来实现了 Urgency 打分，这里也会自动优先展示高优先级的
+        # 目前默认按时间排序（因为爬虫是从第一页开始抓的，通常是按时间倒序）
+        target_reviews = op_data.sort_values('Urgency', ascending=False).head(3)
+        
+        for _, row in target_reviews.iterrows():
+            # 动态获取每条评论的具体问题，而不是笼统的显示 Top Issue
+            issue = row.get('L2_Issue', 'General Issue')
+            
+            # 截取内容
+            content_preview = str(row.get('Content', ''))
+            if len(content_preview) > 150:
+                quote = content_preview[:150] + "..."
+            else:
+                quote = content_preview
+            
+            # 构建链接
+            url = str(row.get('Url', ''))
+            link_html = ''
+            if url.startswith('http'):
+                 link_html = f'<a href="{url}" target="_blank" style="color:#007bff;text-decoration:none;font-size:12px;">[点击查看原文]</a>'
 
-        quote = str(row['Content'])[:150] + "..."
-        link = row['Url'] if str(row['Url']).startswith('http') else '#'
-        link_html = f'<a href="{link}" target="_blank" style="color:#007bff;text-decoration:none;font-size:12px;">[点击查看原文]</a>' if link != '#' else ''
+            # 获取品牌颜色
+            color = Config.BRAND_COLORS.get(op, '#333')
 
-        color = Config.BRAND_COLORS.get(op, '#333')
-
-        html_cards += f"""
-        <div style="background:#fff; border-left:4px solid {color}; padding:12px; margin-bottom:12px; border-radius:4px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
-            <div style="font-size:14px; font-weight:bold; color:{color}; margin-bottom:6px;">
-                {op} • 典型痛点: {top_issue}
+            # 组装 HTML 卡片
+            html_cards += f"""
+            <div style="background:#fff; border-left:4px solid {color}; padding:12px; margin-bottom:12px; border-radius:4px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                <div style="font-size:14px; font-weight:bold; color:{color}; margin-bottom:6px;">
+                    {op} • {issue}
+                </div>
+                <div style="font-size:13px; font-style:italic; color:#555; margin-bottom:8px; line-height:1.4;">
+                    "{quote}"
+                </div>
+                {link_html}
             </div>
-            <div style="font-size:13px; font-style:italic; color:#555; margin-bottom:8px; line-height:1.4;">
-                "{quote}"
-            </div>
-            {link_html}
-        </div>
-        """
+            """
+        # --- 修改结束 ---
+
     return html_cards
 
 def send_report(df, ai_summary, buf_trend, buf_cat, buf_deep, voice_html, cluster_html):
