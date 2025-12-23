@@ -1,80 +1,74 @@
+import asyncio
+import json
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from io import BytesIO
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
-from datetime import datetime
+from openai import AsyncOpenAI
 from src.config import Config
 
-# 设置 matplotlib 后端，防止无头环境报错
-plt.switch_backend('Agg')
+async def analyze_review(client, semaphore, row_data):
+    async with semaphore:
+        text = f"{row_data.get('Title', '')}. {row_data.get('Content', '')}"[:2000]
 
-def clean_data(df):
-    # 简单的数据清洗逻辑
-    op_map = {
-        'rain-internet-service-provider': 'Rain',
-        'mtn-service-provider': 'MTN', 
-        'telkom-sa': 'Telkom',
-        'vodacom-provider': 'Vodacom'
-    }
-    df['Operator'] = df['Operator'].replace(op_map)
-    df['Operator'] = df['Operator'].apply(lambda x: 'MTN' if str(x).upper()=='MTN' else str(x).title())
-    return df
+        # ======================================================
+        # 🧠 双层分类 Prompt (完全保留你的原始内容)
+        # ======================================================
+        prompt = f"""
+        Role: Senior Telecom Analyst for South Africa.
+        Task: Analyze the customer review with a 2-level classification system.
 
-def create_plots(df):
-    imgs = {}
-    
-    # 图1：趋势图
-    plt.figure(figsize=(10, 4))
-    if not df.empty:
-        trend = df.groupby([df['Date'].dt.date, 'Operator']).size().unstack().fillna(0)
-        sns.lineplot(data=trend)
-        plt.title("Review Volume Trend (7 Days)")
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    buf.seek(0)
-    imgs['trend'] = buf
-    plt.close()
-    
-    return imgs
+        Review: "{text}"
 
-def send_email(df, summary, imgs):
-    print("📧 [Step 3] 发送邮件...")
-    msg = MIMEMultipart('related')
-    msg['Subject'] = f"📊 Hellopeter Weekly Report: {datetime.now().strftime('%Y-%m-%d')}"
-    msg['From'] = Config.EMAIL_SENDER
-    msg['To'] = ", ".join(Config.EMAIL_RECEIVERS)
+        Classification Rules：以下只是参考，你可以根据实际情况继续修改和完善；
+        1. **Level_1_Category**: Choose ONE from [Network, Billing, Customer_Service, Technical_Repair, Sales_Admin, App_Digital, Other].
+        2. **Level_2_Issue**: Be specific based on Level 1.
+           - If Network: "No Signal/Dead Zone", "Slow Internet/High Latency", "Intermittent Drop", "No Throughput", "Load Shedding Impact".
+           - If Billing: "Double Debit", "Price Increase", "Cancellation Failure", "Refund Delay", "OOB Charges".
+           - If Service: "Call Center Unreachable", "Rude Agent", "No Feedback", "Chatbot Loop".
+           - If Repair: "Technician No-Show", "Router Faulty", "Fibre Break".
 
-    html = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif;">
-            <h2>🇿🇦 Telecom Weekly Monitor</h2>
-            <div style="background:#f4f4f4; padding:15px; border-left: 5px solid #007bff;">
-                {summary}
-            </div>
-            <h3>Trend Analysis</h3>
-            <img src="cid:trend_img" style="width:100%; max-width:600px;">
-            <p>Total Reviews: {len(df)}</p>
-        </body>
-    </html>
-    """
-    msg.attach(MIMEText(html, 'html'))
+        3. **Service_Type**: MBB (Mobile/Sim) or FWA (Wireless home broadband) or Fibre.
+        4. **Summary**: A concise 1-sentence summary of the specific incident (e.g. "User charged twice after cancelling contract").
 
-    # 附件图片
-    if 'trend' in imgs:
-        img = MIMEImage(imgs['trend'].read())
-        img.add_header('Content-ID', '<trend_img>')
-        msg.attach(img)
+        Output JSON ONLY:
+        {{
+            "L1_Category": "...",
+            "L2_Issue": "...",
+            "Service_Type": "...",
+            "Sentiment": "Positive/Negative/Neutral",
+            "Summary": "..."
+        }}
+        """
 
-    try:
-        server = smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT)
-        server.starttls()
-        server.login(Config.EMAIL_SENDER, Config.EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print("✅ 邮件发送成功！")
-    except Exception as e:
-        print(f"❌ 邮件发送失败: {e}")
+        try:
+            response = await client.chat.completions.create(
+                model=Config.LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": "JSON generator. Telecom expert."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            return {
+                "L1_Category": "Other", "L2_Issue": "Analysis Failed",
+                "Service_Type": "Unknown", "Sentiment": "Neutral", "Summary": "Error"
+            }
+
+async def run_analysis(df):
+    print(f"🧠 [Step 2] 启动双层分类分析...")
+    if df.empty: return df
+
+    client = AsyncOpenAI(api_key=Config.LLM_API_KEY, base_url=Config.LLM_BASE_URL)
+    semaphore = asyncio.Semaphore(10)
+
+    records = df.to_dict('records')
+    tasks = [analyze_review(client, semaphore, r) for r in records]
+    results = await asyncio.gather(*tasks)
+
+    analysis_df = pd.DataFrame(results)
+    final_df = pd.concat([df, analysis_df], axis=1)
+
+    final_df.to_csv(Config.ANALYZED_FILE, index=False, encoding='utf-8-sig')
+    print(f"✅ 分析完成！包含 L1/L2 分类与摘要。")
+    return final_df
